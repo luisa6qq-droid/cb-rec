@@ -1,6 +1,7 @@
 import requests
 import random
 import time
+import datetime
 from threading import Lock
 from bs4 import BeautifulSoup
 
@@ -12,6 +13,7 @@ class ProxyManager:
         self.lock = Lock()
         self.last_update = 0
         self.update_interval = 300
+        self.log_file = 'proxy_debug.log'
 
     def fetch_free_proxies(self):
         proxy_list = []
@@ -33,7 +35,9 @@ class ProxyManager:
 
         for source in api_sources:
             try:
+                self.log(f'Fetching from: {source}')
                 response = requests.get(source, timeout=8)
+                count_before = len(proxy_list)
                 for line in response.text.split('\n'):
                     line = line.strip()
                     if line and ':' in line and not line.startswith('#'):
@@ -41,7 +45,10 @@ class ProxyManager:
                             proxy_list.append(f'http://{line}')
                         else:
                             proxy_list.append(line)
-            except:
+                count_after = len(proxy_list)
+                self.log(f'  -> Got {count_after - count_before} proxies from this source')
+            except Exception as e:
+                self.log(f'  -> Failed to fetch from {source}: {e}')
                 continue
 
         try:
@@ -53,10 +60,12 @@ class ProxyManager:
 
             for source in sources:
                 try:
+                    self.log(f'Scraping HTML from: {source}')
                     response = requests.get(source, timeout=8)
                     soup = BeautifulSoup(response.content, 'html.parser')
                     table = soup.find('table', {'class': 'table table-striped table-bordered'})
 
+                    count_before = len(proxy_list)
                     if table:
                         for row in table.find('tbody').find_all('tr'):
                             cols = row.find_all('td')
@@ -69,12 +78,17 @@ class ProxyManager:
                                     proxy_list.append(f'https://{ip}:{port}')
                                 else:
                                     proxy_list.append(f'http://{ip}:{port}')
-                except:
+                    count_after = len(proxy_list)
+                    self.log(f'  -> Got {count_after - count_before} proxies from HTML scraping')
+                except Exception as e:
+                    self.log(f'  -> Failed to scrape {source}: {e}')
                     continue
-        except:
-            pass
+        except Exception as e:
+            self.log(f'Error in HTML scraping section: {e}')
 
-        return list(set(proxy_list))
+        unique_proxies = list(set(proxy_list))
+        self.log(f'Total unique proxies after deduplication: {len(unique_proxies)}')
+        return unique_proxies
 
     def test_proxy(self, proxy, test_url='http://www.google.com'):
         try:
@@ -89,6 +103,16 @@ class ProxyManager:
             pass
         return False
 
+    def log(self, message):
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        log_message = f'[{timestamp}] {message}\n'
+        try:
+            with open(self.log_file, 'a') as f:
+                f.write(log_message)
+        except:
+            pass
+        print(log_message.strip())
+
     def update_proxies(self, force=False):
         current_time = time.time()
 
@@ -97,28 +121,44 @@ class ProxyManager:
 
         self.lock.acquire()
         try:
-            print('Fetching free proxies...')
+            self.log('='*60)
+            self.log('Starting proxy fetch cycle')
+            self.log('Fetching free proxies from multiple sources...')
             new_proxies = self.fetch_free_proxies()
-            print(f'Found {len(new_proxies)} proxies from free sources')
+            self.log(f'Found {len(new_proxies)} total proxies from all sources')
 
             self.proxies = new_proxies
             self.last_update = current_time
 
-            print('Testing proxies (testing up to 50 proxies)...')
+            if len(new_proxies) == 0:
+                self.log('WARNING: No proxies found from any source!')
+                return
+
+            self.log(f'Testing proxies (up to 50 tests, stopping at 10 working)...')
             tested = 0
+            working_found = 0
             for proxy in self.proxies[:100]:
                 if len(self.working_proxies) >= 10:
+                    self.log('Reached 10 working proxies, stopping tests')
                     break
                 if tested >= 50:
+                    self.log('Reached 50 test attempts, stopping')
                     break
                 if proxy not in self.failed_proxies:
+                    self.log(f'Testing proxy {tested+1}: {proxy}')
                     if self.test_proxy(proxy):
                         if proxy not in self.working_proxies:
                             self.working_proxies.append(proxy)
-                            print(f'Working proxy found: {proxy}')
+                            working_found += 1
+                            self.log(f'✓ WORKING proxy #{working_found}: {proxy}')
+                    else:
+                        self.log(f'✗ Failed: {proxy}')
                 tested += 1
 
-            print(f'Total working proxies: {len(self.working_proxies)}')
+            self.log(f'Testing complete. Total working proxies: {len(self.working_proxies)}')
+            self.log('='*60)
+        except Exception as e:
+            self.log(f'ERROR in update_proxies: {e}')
         finally:
             self.lock.release()
 
