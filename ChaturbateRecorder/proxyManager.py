@@ -16,6 +16,34 @@ class ProxyManager:
     def fetch_free_proxies(self):
         proxy_list = []
 
+        api_sources = [
+            'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all',
+            'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=https&timeout=10000&country=all&ssl=all&anonymity=all',
+            'https://www.proxy-list.download/api/v1/get?type=http',
+            'https://www.proxy-list.download/api/v1/get?type=https',
+            'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt',
+            'https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt',
+            'https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/https.txt',
+            'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
+            'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies_anonymous/http.txt',
+            'https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt',
+            'https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/proxies.txt',
+            'https://raw.githubusercontent.com/hendrikbgr/Free-Proxy-Repo/master/proxy_list.txt',
+        ]
+
+        for source in api_sources:
+            try:
+                response = requests.get(source, timeout=8)
+                for line in response.text.split('\n'):
+                    line = line.strip()
+                    if line and ':' in line and not line.startswith('#'):
+                        if 'http://' not in line and 'https://' not in line:
+                            proxy_list.append(f'http://{line}')
+                        else:
+                            proxy_list.append(line)
+            except:
+                continue
+
         try:
             sources = [
                 'https://www.sslproxies.org/',
@@ -25,7 +53,7 @@ class ProxyManager:
 
             for source in sources:
                 try:
-                    response = requests.get(source, timeout=10)
+                    response = requests.get(source, timeout=8)
                     soup = BeautifulSoup(response.content, 'html.parser')
                     table = soup.find('table', {'class': 'table table-striped table-bordered'})
 
@@ -38,44 +66,23 @@ class ProxyManager:
                                 https = cols[6].text.strip()
 
                                 if https == 'yes':
-                                    proxy = f'https://{ip}:{port}'
+                                    proxy_list.append(f'https://{ip}:{port}')
                                 else:
-                                    proxy = f'http://{ip}:{port}'
-
-                                proxy_list.append(proxy)
-                except Exception as e:
+                                    proxy_list.append(f'http://{ip}:{port}')
+                except:
                     continue
-
-        except Exception as e:
-            pass
-
-        try:
-            response = requests.get('https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all', timeout=10)
-            for line in response.text.split('\n'):
-                line = line.strip()
-                if line and ':' in line:
-                    proxy_list.append(f'http://{line}')
-        except:
-            pass
-
-        try:
-            response = requests.get('https://www.proxy-list.download/api/v1/get?type=http', timeout=10)
-            for line in response.text.split('\n'):
-                line = line.strip()
-                if line and ':' in line:
-                    proxy_list.append(f'http://{line}')
         except:
             pass
 
         return list(set(proxy_list))
 
-    def test_proxy(self, proxy, test_url='https://chaturbate.com'):
+    def test_proxy(self, proxy, test_url='http://www.google.com'):
         try:
             proxies = {
                 'http': proxy,
                 'https': proxy
             }
-            response = requests.get(test_url, proxies=proxies, timeout=10)
+            response = requests.get(test_url, proxies=proxies, timeout=5)
             if response.status_code == 200:
                 return True
         except:
@@ -97,10 +104,12 @@ class ProxyManager:
             self.proxies = new_proxies
             self.last_update = current_time
 
-            print('Testing proxies (testing up to 30 proxies)...')
+            print('Testing proxies (testing up to 50 proxies)...')
             tested = 0
-            for proxy in self.proxies[:30]:
-                if tested >= 30:
+            for proxy in self.proxies[:100]:
+                if len(self.working_proxies) >= 10:
+                    break
+                if tested >= 50:
                     break
                 if proxy not in self.failed_proxies:
                     if self.test_proxy(proxy):
