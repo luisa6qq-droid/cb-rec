@@ -84,21 +84,34 @@ class Modelo(threading.Thread):
 
                 for attempt in range(max_attempts):
                     try:
+                        with open('model_check.log', 'a') as f:
+                            f.write(f'[{self.modelo}] Recording attempt {attempt+1}\\n')
+
                         if attempt == 0:
+                            with open('model_check.log', 'a') as f:
+                                f.write(f'[{self.modelo}] Trying direct stream connection...\\n')
                             streams = session.streams(f'hlsvariant://{isOnline}')
                         else:
                             proxy = proxy_manager.get_random_proxy()
                             if proxy:
                                 proxy_url = proxy.get('https') or proxy.get('http')
+                                with open('model_check.log', 'a') as f:
+                                    f.write(f'[{self.modelo}] Trying with proxy: {proxy_url}\\n')
                                 session.set_option('http-proxy', proxy_url)
                                 streams = session.streams(f'hlsvariant://{isOnline}')
                             else:
+                                with open('model_check.log', 'a') as f:
+                                    f.write(f'[{self.modelo}] No proxy available for stream\\n')
                                 break
 
                         stream = streams['best']
                         fd = stream.open()
+                        with open('model_check.log', 'a') as f:
+                            f.write(f'[{self.modelo}] \u2713 Stream opened successfully!\\n')
                         break
                     except Exception as e:
+                        with open('model_check.log', 'a') as f:
+                            f.write(f'[{self.modelo}] Stream attempt {attempt+1} failed: {e}\\n')
                         if attempt < max_attempts - 1:
                             time.sleep(2)
                             continue
@@ -152,30 +165,61 @@ class Modelo(threading.Thread):
                 f.write(f'\n{datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")} EXCEPTION: {e}\n')
 
     def isOnline(self):
+        log_msg = f'[{self.modelo}] Checking if online...'
+        with open('model_check.log', 'a') as f:
+            f.write(f'{log_msg}\n')
+
         try:
             resp = requests.get(f'https://chaturbate.com/api/chatvideocontext/{self.modelo}/', timeout=10)
+            json_data = resp.json()
+            with open('model_check.log', 'a') as f:
+                f.write(f'[{self.modelo}] Direct connection response: {json_data}\n')
+
             hls_url = ''
-            if 'hls_source' in resp.json():
-                hls_url = resp.json()['hls_source']
+            if 'hls_source' in json_data:
+                hls_url = json_data['hls_source']
             if len(hls_url):
+                with open('model_check.log', 'a') as f:
+                    f.write(f'[{self.modelo}] ✓ Found stream via direct connection\n')
                 return hls_url
             else:
-                return False
-        except:
-            pass
+                with open('model_check.log', 'a') as f:
+                    f.write(f'[{self.modelo}] No stream in direct connection, trying proxy...\n')
+        except Exception as e:
+            with open('model_check.log', 'a') as f:
+                f.write(f'[{self.modelo}] Direct connection failed: {e}\n')
 
-        try:
-            proxy = proxy_manager.get_random_proxy()
-            if proxy:
-                resp = requests.get(f'https://chaturbate.com/api/chatvideocontext/{self.modelo}/', proxies=proxy, timeout=15)
-                hls_url = ''
-                if 'hls_source' in resp.json():
-                    hls_url = resp.json()['hls_source']
-                if len(hls_url):
-                    return hls_url
-        except:
-            pass
+        for attempt in range(3):
+            try:
+                proxy = proxy_manager.get_random_proxy()
+                if proxy:
+                    with open('model_check.log', 'a') as f:
+                        f.write(f'[{self.modelo}] Attempt {attempt+1} with proxy: {proxy.get("http")}\n')
 
+                    resp = requests.get(f'https://chaturbate.com/api/chatvideocontext/{self.modelo}/', proxies=proxy, timeout=15)
+                    json_data = resp.json()
+                    with open('model_check.log', 'a') as f:
+                        f.write(f'[{self.modelo}] Proxy response: {json_data}\n')
+
+                    hls_url = ''
+                    if 'hls_source' in json_data:
+                        hls_url = json_data['hls_source']
+                    if len(hls_url):
+                        with open('model_check.log', 'a') as f:
+                            f.write(f'[{self.modelo}] ✓ Found stream via PROXY!\n')
+                        return hls_url
+                else:
+                    with open('model_check.log', 'a') as f:
+                        f.write(f'[{self.modelo}] No proxy available\n')
+                    break
+            except Exception as e:
+                with open('model_check.log', 'a') as f:
+                    f.write(f'[{self.modelo}] Proxy attempt {attempt+1} failed: {e}\n')
+                proxy_manager.mark_proxy_failed(proxy)
+                continue
+
+        with open('model_check.log', 'a') as f:
+            f.write(f'[{self.modelo}] ✗ Model offline or geo-blocked (no working proxy)\n')
         return False
 
     def stop(self):
