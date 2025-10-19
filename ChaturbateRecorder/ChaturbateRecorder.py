@@ -8,6 +8,7 @@ import streamlink
 import subprocess
 import queue
 import requests
+from proxyManager import ProxyManager
 
 if os.name == 'nt':
     import ctypes
@@ -21,6 +22,8 @@ setting = {}
 recording = []
 
 hilos = []
+
+proxy_manager = ProxyManager()
 
 def cls():
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -75,9 +78,35 @@ class Modelo(threading.Thread):
             self.file = os.path.join(setting['save_directory'], self.modelo, f'{datetime.datetime.fromtimestamp(time.time()).strftime("%Y.%m.%d_%H.%M.%S")}_{self.modelo}.mp4')
             try:
                 session = streamlink.Streamlink()
-                streams = session.streams(f'hlsvariant://{isOnline}')
-                stream = streams['best']
-                fd = stream.open()
+
+                max_attempts = 3
+                fd = None
+
+                for attempt in range(max_attempts):
+                    try:
+                        if attempt == 0:
+                            streams = session.streams(f'hlsvariant://{isOnline}')
+                        else:
+                            proxy = proxy_manager.get_random_proxy()
+                            if proxy:
+                                proxy_url = proxy.get('https') or proxy.get('http')
+                                session.set_option('http-proxy', proxy_url)
+                                streams = session.streams(f'hlsvariant://{isOnline}')
+                            else:
+                                break
+
+                        stream = streams['best']
+                        fd = stream.open()
+                        break
+                    except Exception as e:
+                        if attempt < max_attempts - 1:
+                            time.sleep(2)
+                            continue
+                        else:
+                            raise e
+
+                if not fd:
+                    raise Exception('Failed to open stream after all attempts')
                 if not isModelInListofObjects(self.modelo, recording):
                     os.makedirs(os.path.join(setting['save_directory'], self.modelo), exist_ok=True)
                     with open(self.file, 'wb') as f:
@@ -124,7 +153,7 @@ class Modelo(threading.Thread):
 
     def isOnline(self):
         try:
-            resp = requests.get(f'https://chaturbate.com/api/chatvideocontext/{self.modelo}/')
+            resp = requests.get(f'https://chaturbate.com/api/chatvideocontext/{self.modelo}/', timeout=10)
             hls_url = ''
             if 'hls_source' in resp.json():
                 hls_url = resp.json()['hls_source']
@@ -133,7 +162,21 @@ class Modelo(threading.Thread):
             else:
                 return False
         except:
-            return False
+            pass
+
+        try:
+            proxy = proxy_manager.get_random_proxy()
+            if proxy:
+                resp = requests.get(f'https://chaturbate.com/api/chatvideocontext/{self.modelo}/', proxies=proxy, timeout=15)
+                hls_url = ''
+                if 'hls_source' in resp.json():
+                    hls_url = resp.json()['hls_source']
+                if len(hls_url):
+                    return hls_url
+        except:
+            pass
+
+        return False
 
     def stop(self):
         self._stopevent.set()
@@ -157,6 +200,19 @@ class CleaningThread(threading.Thread):
             for i in range(10, 0, -1):
                 self.interval = i
                 time.sleep(1)
+
+class ProxyUpdateThread(threading.Thread):
+    def __init__(self):
+        threading.Thread.__init__(self)
+        self.daemon = True
+
+    def run(self):
+        while True:
+            try:
+                proxy_manager.update_proxies()
+                time.sleep(300)
+            except:
+                time.sleep(60)
 
 class AddModelsThread(threading.Thread):
     def __init__(self):
@@ -205,6 +261,11 @@ if __name__ == '__main__':
             t = threading.Thread(target=postProcess)
             postprocessingWorkers.append(t)
             t.start()
+
+    print('Initializing proxy system...')
+    proxyUpdateThread = ProxyUpdateThread()
+    proxyUpdateThread.start()
+
     cleaningThread = CleaningThread()
     cleaningThread.start()
     while True:
@@ -218,6 +279,7 @@ if __name__ == '__main__':
                 if len(addModelsThread.repeatedModels): print('The following models are more than once in wanted: [\'' + ', '.join(modelo for modelo in addModelsThread.repeatedModels) + '\']')
                 print(f'{len(hilos):02d} alive Threads (1 Thread per non-recording model), cleaning dead/not-online Threads in {cleaningThread.interval:02d} seconds, {addModelsThread.counterModel:02d} models in wanted')
                 print(f'Online Threads (models): {len(recording):02d}')
+                print(f'Working proxies available: {proxy_manager.get_proxy_count()}')
                 print('The following models are being recorded:')
                 for hiloModelo in recording: print(f'  Model: {hiloModelo.modelo}  -->  File: {os.path.basename(hiloModelo.file)}')
                 print(f'Next check in {i:02d} seconds\r', end='')

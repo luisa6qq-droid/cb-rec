@@ -13,8 +13,10 @@ Requires python3.5 or newer. You can grab python3.5.2 from https://www.python.or
 
 to install required modules, run:
 ```
-python3.5 -m pip install streamlink bs4 lxml gevent
+python3.5 -m pip install streamlink bs4 lxml gevent requests
 ```
+
+Note: The `requests` module is required for the proxy functionality that allows recording geo-blocked streams.
 
 
 Edit the config file (config.conf) to point to the directory you want to record to, where your "wanted" file is located, which genders, and the interval between checks (in seconds)
